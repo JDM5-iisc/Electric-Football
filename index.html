@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Electric football JAPAS</title>
+    <style>
+        body {
+            display: flex; flex-direction: column; align-items: center;
+            background-color: #2c3e50; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0; padding: 20px; touch-action: none; color: white;
+        }
+        #game-container {
+            position: relative; background-color: white;
+            box-shadow: 0 8px 16px rgba(0,0,0,0.5); border-radius: 8px; overflow: hidden;
+        }
+        canvas { display: block; }
+
+        /* UI Overlays */
+        #top-bar {
+            position: absolute; top: 0; left: 0; right: 0;
+            display: flex; justify-content: space-between;
+            padding: 10px 15px; pointer-events: none;
+        }
+        .badge {
+            background-color: rgba(0, 0, 0, 0.7); color: white;
+            padding: 5px 12px; border-radius: 20px; font-weight: bold; font-size: 16px;
+        }
+        #message-display {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            font-size: 36px; font-weight: 900; text-align: center;
+            text-shadow: 2px 2px 0px black, -2px -2px 0px black, 2px -2px 0px black, -2px 2px 0px black;
+            pointer-events: none; opacity: 0; transition: opacity 0.2s;
+        }
+
+        /* Full Screen End Overlay */
+        #end-screen {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background-color: rgba(0,0,0,0.9); display: none;
+            flex-direction: column; justify-content: center; align-items: center; z-index: 10;
+        }
+        #end-title { font-size: 48px; font-weight: bold; margin-bottom: 20px; text-align: center; }
+        #end-subtitle { font-size: 20px; margin-bottom: 30px; white-space: pre-line; }
+        button {
+            padding: 12px 24px; font-size: 18px; font-weight: bold;
+            background-color: #3498db; color: white; border: none;
+            border-radius: 8px; cursor: pointer; box-shadow: 0 4px 0 #2980b9;
+        }
+        button:active { transform: translateY(4px); box-shadow: none; }
+    </style>
+</head>
+<body>
+
+    <h2 id="page-title">Electric Football 5</h2>
+
+    <div id="game-container">
+        <canvas id="gameCanvas" width="600" height="600"></canvas>
+
+        <div id="top-bar">
+            <div id="round-display" class="badge">Round 1</div>
+            <div id="score-display" class="badge">Score: 0/0</div>
+        </div>
+
+        <div id="message-display"></div>
+
+        <div id="end-screen">
+            <div id="end-title">It's Crazy</div>
+            <div id="end-subtitle">You won</div>
+            <button onclick="startGame()">Play Again</button>
+        </div>
+    </div>
+
+<script>
+    // --- Physics Constants ---
+    const DT = 0.1;
+    const SPEED = 2.0;
+    const REPULSOR_K = 10.0;
+    const LIMITS = { xMin: -10, xMax: 10, yMin: -10, yMax: 10 };
+    const GOAL_Y = 10.0;
+    const ENEMY_INNER_X = 7.0;
+    const GK_RADIUS = 1.0;
+    const GK_SPEED = 0.3; // Speed for the moving goalkeeper
+
+    // --- Master Game Rules ---
+    const MAX_TRIES = 3;
+    const WIN_THRESHOLD = 2;
+    const WAIT_TIME = 500;
+
+    // --- Dynamic Game State ---
+    let currentRound = 1;
+    let roundGoalsScored = 0;
+    let roundTries = 0;
+
+    let ballPos = { x: 0.0, y: -10.0 };
+    let ballVel = { x: 0.0, y: 0.0 };
+    let trajectory = [];
+
+    // Goalkeeper State
+    let gkPos = { x: 0.0, y: 9.0 };
+    let gkVelX = 0;
+
+    let isBallMoving = false;
+    let isWaitingForNextTurn = false; 
+
+    // --- Round-Specific Configurations ---
+    let enemies = [];
+    let goalXRange = [-3, 3];
+    let hasGoalkeeper = false;
+    let isGkMoving = false;
+
+    // --- DOM Elements ---
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+    const scoreDisplay = document.getElementById("score-display");
+    const roundDisplay = document.getElementById("round-display");
+    const messageDisplay = document.getElementById("message-display");
+    const endScreen = document.getElementById("end-screen");
+    const endTitle = document.getElementById("end-title");
+    const endSubtitle = document.getElementById("end-subtitle");
+
+    // --- Math & Mapping Helpers ---
+    function mapX(x) { return ((x - LIMITS.xMin) / (LIMITS.xMax - LIMITS.xMin)) * canvas.width; }
+    function mapY(y) { return canvas.height - ((y - LIMITS.yMin) / (LIMITS.yMax - LIMITS.yMin)) * canvas.height; }
+    function randUniform(min, max) { return Math.random() * (max - min) + min; }
+    function randChoice(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+    // --- Level Setup ---
+    function setupRound(round) {
+        currentRound = round;
+        roundGoalsScored = 0;
+        roundTries = 0;
+        isBallMoving = false;
+        isWaitingForNextTurn = false;
+        
+        roundDisplay.innerText = `Round ${currentRound}`;
+        updateScoreUI();
+
+        if (round === 1) {
+            goalXRange = [-3, 3];
+            hasGoalkeeper = false;
+            isGkMoving = false;
+            enemies = [{ x: -10, y: 0 }];
+        } else if (round === 2) {
+            goalXRange = [-2, 2];
+            hasGoalkeeper = false;
+            isGkMoving = false;
+            enemies = [{ x: -10, y: 0 }, { x: 9, y: 7 }];
+        } else if (round === 3) {
+            goalXRange = [-1, 1];
+            hasGoalkeeper = false;
+            isGkMoving = false;
+            randomizeEnemies();
+        } else if (round === 4) {
+            goalXRange = [-2.5, 2.5];
+            hasGoalkeeper = true;
+            isGkMoving = false;
+            randomizeEnemies();
+        } else if (round === 5) {
+            goalXRange = [-2.5, 2.5];
+            hasGoalkeeper = true;
+            isGkMoving = true;
+            randomizeEnemies();
+        }
+        
+        resetBall();
+    }
+
+    function randomizeEnemies() {
+        // Enemy 1 is STRICTLY on the left side (-10 to -7)
+        let e1x = randUniform(-10, -ENEMY_INNER_X);
+        let e1y = randUniform(-6, 6);
+
+        // Enemy 2 is STRICTLY on the right side (7 to 10)
+        let e2x = randUniform(ENEMY_INNER_X, 10);
+        let e2y = randUniform(-6, 6);
+
+        enemies = [{ x: e1x, y: e1y }, { x: e2x, y: e2y }];
+    }
+
+    function resetBall() {
+        ballPos = { x: 0.0, y: -10.0 };
+        trajectory = [{ x: 0.0, y: -10.0 }];
+        
+        if (hasGoalkeeper) {
+            gkPos = { x: 0.0, y: 9.0 };
+            if (isGkMoving) {
+                gkVelX = GK_SPEED;
+            } else {
+                gkVelX = 0;
+            }
+        }
+    }
+
+    // --- Game Logic ---
+    function startGame() {
+        endScreen.style.display = "none";
+        setupRound(1);
+    }
+
+    function getAcceleration(pos) {
+        let accX = 0, accY = 0;
+        for (let enemy of enemies) {
+            let dx = pos.x - enemy.x;
+            let dy = pos.y - enemy.y;
+            let dist = Math.sqrt(dx*dx + dy*dy);
+            let forceMag = REPULSOR_K / (dist*dist + 1e-6);
+            accX += (dx / dist) * forceMag;
+            accY += (dy / dist) * forceMag;
+        }
+        return { x: accX, y: accY };
+    }
+
+    function handleShotResult(message, color, isGoal) {
+        isBallMoving = false;
+        isWaitingForNextTurn = true;
+
+        if (isGoal) roundGoalsScored++;
+        updateScoreUI();
+
+        // Show big message
+        messageDisplay.innerText = message;
+        messageDisplay.style.color = color;
+        messageDisplay.style.opacity = "1";
+
+        // Wait, then process the next step
+        setTimeout(() => {
+            messageDisplay.style.opacity = "0";
+
+            // Did they pass the round?
+            if (roundGoalsScored >= WIN_THRESHOLD) {
+                if (currentRound === 5) {
+                    showEndScreen("It's Crazy", "gold", "See Me !");
+                } else {
+                    setupRound(currentRound + 1); // Advance to next round
+                }
+            }
+            // Did they run out of tries?
+            else if (roundTries >= MAX_TRIES) {
+                showEndScreen("Oops !", "red", `Failed Round ${currentRound}.\nGo publish papers`);
+            }
+            // Just another turn in the current round
+            else {
+                if (currentRound >= 3) randomizeEnemies();
+                resetBall();
+                isWaitingForNextTurn = false;
+            }
+        }, WAIT_TIME);
+    }
+
+    function showEndScreen(titleText, titleColor, subtitleText) {
+        endScreen.style.display = "flex";
+        endTitle.innerText = titleText;
+        endTitle.style.color = titleColor;
+        endSubtitle.innerText = subtitleText;
+    }
+
+    function updateScoreUI() {
+        scoreDisplay.innerText = `Score: ${roundGoalsScored}/${roundTries}`;
+    }
+
+    // --- Physics Loop ---
+    function update() {
+        // Move the Goalkeeper (Round 5 only)
+        if (hasGoalkeeper && isGkMoving && !isWaitingForNextTurn) {
+            gkPos.x += gkVelX * DT;
+            
+            let boundRight = goalXRange[1] - 0.5;
+            let boundLeft = goalXRange[0] + 0.5;
+            
+            if (gkPos.x >= boundRight) {
+                gkPos.x = boundRight;
+                gkVelX = -GK_SPEED; // Turn left
+            } else if (gkPos.x <= boundLeft) {
+                gkPos.x = boundLeft;
+                gkVelX = GK_SPEED;  // Turn right
+            }
+        }
+
+        if (isBallMoving) {
+            let currAccel = getAcceleration(ballPos);
+            let newX = ballPos.x + ballVel.x * DT + 0.5 * currAccel.x * (DT * DT);
+            let newY = ballPos.y + ballVel.y * DT + 0.5 * currAccel.y * (DT * DT);
+            let newPos = { x: newX, y: newY };
+            let newAccel = getAcceleration(newPos);
+
+            ballVel.x += 0.5 * (currAccel.x + newAccel.x) * DT;
+            ballVel.y += 0.5 * (currAccel.y + newAccel.y) * DT;
+            ballPos = newPos;
+
+            trajectory.push({ x: ballPos.x, y: ballPos.y });
+
+            // 1. Check Goalkeeper Collision
+            if (hasGoalkeeper) {
+                let dx = ballPos.x - gkPos.x;
+                let dy = ballPos.y - gkPos.y;
+                if (Math.sqrt(dx*dx + dy*dy) <= GK_RADIUS) {
+                    handleShotResult("GOAL SAVED!", "yellow", false);
+                    return; // Exit early
+                }
+            }
+
+            // 2. Check Goal
+            if (ballPos.y >= GOAL_Y) {
+                if (ballPos.x >= goalXRange[0] && ballPos.x <= goalXRange[1]) {
+                    handleShotResult("GREAT GOAL!", "#2ecc71", true);
+                } else {
+                    handleShotResult("NO GOAL :(", "#e74c3c", false);
+                }
+            }
+            // 3. Check Out of Bounds
+            else if (Math.abs(ballPos.x) > 10.0 || ballPos.y < -10.1) {
+                handleShotResult("NO GOAL :(", "#e74c3c", false);
+            }
+        }
+    }
+
+    // --- Graphics Rendering ---
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height); // Clear screen
+
+        // Draw Goalposts
+        ctx.strokeStyle = "#27ae60"; // Green
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(mapX(goalXRange[0]), mapY(9.5)); ctx.lineTo(mapX(goalXRange[0]), mapY(10.5));
+        ctx.moveTo(mapX(goalXRange[1]), mapY(9.5)); ctx.lineTo(mapX(goalXRange[1]), mapY(10.5));
+        ctx.stroke();
+
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(mapX(goalXRange[0]), mapY(GOAL_Y)); ctx.lineTo(mapX(goalXRange[1]), mapY(GOAL_Y));
+        ctx.stroke();
+
+        // Draw Goalkeeper (if active)
+        if (hasGoalkeeper) {
+            ctx.fillStyle = "#f1c40f"; // Yellow
+            ctx.strokeStyle = "black";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            let radiusPixels = mapX(GK_RADIUS) - mapX(0);
+            ctx.arc(mapX(gkPos.x), mapY(gkPos.y), radiusPixels, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+        }
+
+        // Draw Enemies
+        ctx.fillStyle = "#e74c3c"; // Red
+        for (let enemy of enemies) {
+            ctx.beginPath();
+            ctx.arc(mapX(enemy.x), mapY(enemy.y), 15, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // Draw Trajectory
+        if (trajectory.length > 0) {
+            ctx.strokeStyle = "rgba(0, 0, 0, 0.15)";
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath();
+            ctx.moveTo(mapX(0), mapY(-10));
+            for (let pt of trajectory) ctx.lineTo(mapX(pt.x), mapY(pt.y));
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+
+        // Draw Ball
+        ctx.fillStyle = "black";
+        ctx.beginPath();
+        ctx.arc(mapX(ballPos.x), mapY(ballPos.y), 8, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    // --- Animation & Input Loop ---
+    function loop() {
+        update();
+        draw();
+        requestAnimationFrame(loop);
+    }
+
+    function handleInput(event) {
+        event.preventDefault(); // Stop mobile scrolling
+        if (isBallMoving || isWaitingForNextTurn) return;
+
+        roundTries++;
+        updateScoreUI();
+        messageDisplay.style.opacity = "0"; // Hide previous message if lingering
+
+        let rect = canvas.getBoundingClientRect();
+        let clientX = event.touches ? event.touches[0].clientX : event.clientX;
+        let clientY = event.touches ? event.touches[0].clientY : event.clientY;
+
+        // Un-map screen pixels back to math coordinates
+        let targetX = ((clientX - rect.left) / canvas.width) * (LIMITS.xMax - LIMITS.xMin) + LIMITS.xMin;
+        let targetY = LIMITS.yMax - ((clientY - rect.top) / canvas.height) * (LIMITS.yMax - LIMITS.yMin);
+
+        let dirX = targetX - ballPos.x;
+        let dirY = targetY - ballPos.y;
+        let dist = Math.sqrt(dirX*dirX + dirY*dirY);
+
+        if (dist > 0) {
+            ballVel = { x: (dirX / dist) * SPEED, y: (dirY / dist) * SPEED };
+            isBallMoving = true;
+        }
+    }
+
+    // Connect interactions
+    canvas.addEventListener("mousedown", handleInput);
+    canvas.addEventListener("touchstart", handleInput, {passive: false});
+
+    // Start everything
+    startGame();
+    loop();
+
+</script>
+</body>
+</html>
