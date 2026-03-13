@@ -13,8 +13,17 @@
         #game-container {
             position: relative; background-color: white;
             box-shadow: 0 8px 16px rgba(0,0,0,0.5); border-radius: 8px; overflow: hidden;
+            /* Added these 4 lines to make it shrink and fit the screen: */
+            width: 100%; 
+            max-width: 600px; 
+            max-height: 75vh; 
+            aspect-ratio: 1 / 1;
         }
-        canvas { display: block; }
+        canvas { 
+            display: block; 
+            width: 100%; 
+            height: 100%; 
+        }
 
         /* UI Overlays */
         #top-bar {
@@ -389,8 +398,8 @@
         let clientY = event.touches ? event.touches[0].clientY : event.clientY;
 
         // Un-map screen pixels back to math coordinates
-        let targetX = ((clientX - rect.left) / canvas.width) * (LIMITS.xMax - LIMITS.xMin) + LIMITS.xMin;
-        let targetY = LIMITS.yMax - ((clientY - rect.top) / canvas.height) * (LIMITS.yMax - LIMITS.yMin);
+        let targetX = ((clientX - rect.left) / rect.width) * (LIMITS.xMax - LIMITS.xMin) + LIMITS.xMin;
+        let targetY = LIMITS.yMax - ((clientY - rect.top) / rect.height) * (LIMITS.yMax - LIMITS.yMin);
 
         let dirX = targetX - ballPos.x;
         let dirY = targetY - ballPos.y;
