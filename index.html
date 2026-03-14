@@ -88,7 +88,7 @@
     const GOAL_Y = 10.0;
     const ENEMY_INNER_X = 7.0;
     const GK_RADIUS = 1.0;
-    const GK_SPEED = 0.3; // Speed for the moving goalkeeper
+    const GK_SPEED = 0.7; // Speed for the moving goalkeeper
 
     // --- Master Game Rules ---
     const MAX_TRIES = 3;
@@ -160,12 +160,12 @@
             isGkMoving = false;
             randomizeEnemies();
         } else if (round === 4) {
-            goalXRange = [-2.5, 2.5];
+            goalXRange = [-2.0, 2.0];
             hasGoalkeeper = true;
             isGkMoving = false;
             randomizeEnemies();
         } else if (round === 5) {
-            goalXRange = [-2.5, 2.5];
+            goalXRange = [-1.9, 1.9];
             hasGoalkeeper = true;
             isGkMoving = true;
             randomizeEnemies();
